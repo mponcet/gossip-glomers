@@ -2,52 +2,9 @@ use std::io::{BufRead, Write};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize)]
-struct Message<Payload> {
-    src: String,
-    #[serde(rename = "dest")]
-    dst: String,
-    body: Body<Payload>,
-}
+use crate::protocol::*;
 
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-struct Body<Payload> {
-    #[serde(rename = "msg_id")]
-    id: Option<usize>,
-    in_reply_to: Option<usize>,
-    #[serde(flatten)]
-    payload: Payload,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(tag = "type")]
-#[serde(rename = "init")]
-struct Init {
-    node_id: String,
-    node_ids: Vec<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(tag = "type")]
-#[serde(rename = "init_ok")]
-struct InitOk {}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(tag = "type")]
-#[serde(rename = "echo")]
-struct Echo {
-    echo: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(tag = "type")]
-#[serde(rename = "echo_ok")]
-struct EchoOk {
-    echo: String,
-}
-
-enum NodeError {
+pub enum NodeError {
     Io(std::io::Error),
     Json(serde_json::Error),
 }
@@ -99,39 +56,39 @@ pub fn error_chain_fmt(
     Ok(())
 }
 
-trait Node {
+pub trait Node {
     type PayloadIn;
     type PayloadOut;
 
     fn reply(&mut self, msg: Self::PayloadIn) -> Self::PayloadOut;
 }
 
-struct Runtime<I, O> {
+pub struct Runtime<I, O> {
     id: usize,
     handler: Box<dyn Node<PayloadIn = I, PayloadOut = O>>,
 }
 
-struct RuntimeBuilder<H, S> {
+pub struct RuntimeBuilder<H, S> {
     handler: H,
     state: std::marker::PhantomData<S>,
 }
 
 // States
-struct Handler<I, O>(Box<dyn Node<PayloadIn = I, PayloadOut = O>>);
-struct NoHandler;
+pub struct Handler<I, O>(Box<dyn Node<PayloadIn = I, PayloadOut = O>>);
+pub struct NoHandler;
 
-struct NotRunnable;
-struct Runnable;
+pub struct NotRunnable;
+pub struct Runnable;
 
 impl RuntimeBuilder<NoHandler, NotRunnable> {
-    fn new() -> Self {
+    pub fn new() -> Self {
         RuntimeBuilder {
             handler: NoHandler,
             state: std::marker::PhantomData,
         }
     }
 
-    fn with_handler<I, O>(
+    pub fn with_handler<I, O>(
         self,
         handler: Box<dyn Node<PayloadIn = I, PayloadOut = O>>,
     ) -> RuntimeBuilder<Handler<I, O>, Runnable> {
@@ -142,8 +99,14 @@ impl RuntimeBuilder<NoHandler, NotRunnable> {
     }
 }
 
+impl Default for RuntimeBuilder<NoHandler, NotRunnable> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<I, O> RuntimeBuilder<Handler<I, O>, Runnable> {
-    fn build(self) -> Runtime<I, O> {
+    pub fn build(self) -> Runtime<I, O> {
         Runtime {
             id: 0,
             handler: self.handler.0,
@@ -156,7 +119,7 @@ where
     I: for<'a> Deserialize<'a>,
     O: Serialize,
 {
-    fn run(mut self) -> Result<(), NodeError> {
+    pub fn run(mut self) -> Result<(), NodeError> {
         let mut stdin = std::io::stdin().lock();
         let mut stdout = std::io::stdout().lock();
 
@@ -196,25 +159,4 @@ where
 
         Ok(())
     }
-}
-
-struct EchoNode;
-
-impl Node for EchoNode {
-    type PayloadIn = Echo;
-    type PayloadOut = EchoOk;
-
-    fn reply(&mut self, msg: Echo) -> EchoOk {
-        EchoOk { echo: msg.echo }
-    }
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let echo_node = EchoNode {};
-    let runtime = RuntimeBuilder::new()
-        .with_handler(Box::new(echo_node))
-        .build();
-    let _ = runtime.run();
-
-    Ok(())
 }
