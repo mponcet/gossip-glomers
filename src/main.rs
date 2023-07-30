@@ -81,13 +81,11 @@ impl std::fmt::Display for NodeError {
         }
     }
 }
-
 impl std::fmt::Debug for NodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         error_chain_fmt(self, f)
     }
 }
-
 pub fn error_chain_fmt(
     e: &impl std::error::Error,
     f: &mut std::fmt::Formatter<'_>,
@@ -102,19 +100,66 @@ pub fn error_chain_fmt(
 }
 
 trait Node {
-    fn run(&mut self) -> Result<(), NodeError>;
+    type PayloadIn;
+    type PayloadOut;
+
+    fn reply(&mut self, msg: Self::PayloadIn) -> Self::PayloadOut;
 }
 
-struct EchoNode {
+struct Runtime<I, O> {
     id: usize,
+    handler: Box<dyn Node<PayloadIn = I, PayloadOut = O>>,
 }
 
-impl Node for EchoNode {
-    fn run(&mut self) -> std::result::Result<(), NodeError> {
+struct RuntimeBuilder<H, S> {
+    handler: H,
+    state: std::marker::PhantomData<S>,
+}
+
+// States
+struct Handler<I, O>(Box<dyn Node<PayloadIn = I, PayloadOut = O>>);
+struct NoHandler;
+
+struct NotRunnable;
+struct Runnable;
+
+impl RuntimeBuilder<NoHandler, NotRunnable> {
+    fn new() -> Self {
+        RuntimeBuilder {
+            handler: NoHandler,
+            state: std::marker::PhantomData,
+        }
+    }
+
+    fn with_handler<I, O>(
+        self,
+        handler: Box<dyn Node<PayloadIn = I, PayloadOut = O>>,
+    ) -> RuntimeBuilder<Handler<I, O>, Runnable> {
+        RuntimeBuilder {
+            handler: Handler(handler),
+            state: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<I, O> RuntimeBuilder<Handler<I, O>, Runnable> {
+    fn build(self) -> Runtime<I, O> {
+        Runtime {
+            id: 0,
+            handler: self.handler.0,
+        }
+    }
+}
+
+impl<I, O> Runtime<I, O>
+where
+    I: for<'a> Deserialize<'a>,
+    O: Serialize,
+{
+    fn run(mut self) -> Result<(), NodeError> {
         let mut stdin = std::io::stdin().lock();
         let mut stdout = std::io::stdout().lock();
 
-        // init
         let mut line = String::new();
         stdin.read_line(&mut line)?;
         let init_msg: Message<Init> = serde_json::from_str(&line)?;
@@ -131,10 +176,9 @@ impl Node for EchoNode {
         serde_json::to_writer(&mut stdout, &init_ok_msg)?;
         stdout.write_all(b"\n")?;
 
-        // echo
         for line in stdin.lines() {
             let line = line.unwrap();
-            let echo_msg: Message<Echo> = serde_json::from_str(&line)?;
+            let echo_msg: Message<I> = serde_json::from_str(&line)?;
 
             self.id += 1;
             let echo_ok_msg = Message {
@@ -143,9 +187,7 @@ impl Node for EchoNode {
                 body: Body::<_> {
                     id: Some(self.id),
                     in_reply_to: echo_msg.body.id,
-                    payload: EchoOk {
-                        echo: echo_msg.body.payload.echo,
-                    },
+                    payload: self.handler.reply(echo_msg.body.payload),
                 },
             };
             serde_json::to_writer(&mut stdout, &echo_ok_msg)?;
@@ -156,9 +198,23 @@ impl Node for EchoNode {
     }
 }
 
+struct EchoNode;
+
+impl Node for EchoNode {
+    type PayloadIn = Echo;
+    type PayloadOut = EchoOk;
+
+    fn reply(&mut self, msg: Echo) -> EchoOk {
+        EchoOk { echo: msg.echo }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut echo_node = EchoNode { id: 0 };
-    echo_node.run()?;
+    let echo_node = EchoNode {};
+    let runtime = RuntimeBuilder::new()
+        .with_handler(Box::new(echo_node))
+        .build();
+    let _ = runtime.run();
 
     Ok(())
 }
