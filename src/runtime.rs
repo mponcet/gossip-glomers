@@ -1,4 +1,7 @@
-use std::io::{BufRead, Write};
+use std::{
+    cell::RefCell,
+    io::{BufRead, Write},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -60,12 +63,17 @@ pub trait Node {
     type PayloadIn;
     type PayloadOut;
 
-    fn reply(&mut self, msg: Self::PayloadIn) -> Self::PayloadOut;
+    fn reply(
+        &mut self,
+        runtime: &Runtime<Self::PayloadIn, Self::PayloadOut>,
+        msg: Self::PayloadIn,
+    ) -> Self::PayloadOut;
 }
 
 pub struct Runtime<I, O> {
     id: usize,
-    handler: Box<dyn Node<PayloadIn = I, PayloadOut = O>>,
+    pub node_id: Option<String>,
+    handler: RefCell<Box<dyn Node<PayloadIn = I, PayloadOut = O>>>,
 }
 
 pub struct RuntimeBuilder<H, S> {
@@ -109,7 +117,8 @@ impl<I, O> RuntimeBuilder<Handler<I, O>, Runnable> {
     pub fn build(self) -> Runtime<I, O> {
         Runtime {
             id: 0,
-            handler: self.handler.0,
+            node_id: None,
+            handler: RefCell::new(self.handler.0),
         }
     }
 }
@@ -127,6 +136,7 @@ where
         stdin.read_line(&mut line)?;
         let init_msg: Message<Init> = serde_json::from_str(&line)?;
 
+        self.node_id = Some(init_msg.body.payload.node_id);
         let init_ok_msg = Message {
             src: init_msg.dst,
             dst: init_msg.src,
@@ -141,16 +151,16 @@ where
 
         for line in stdin.lines() {
             let line = line.unwrap();
-            let echo_msg: Message<I> = serde_json::from_str(&line)?;
+            let msg_in: Message<I> = serde_json::from_str(&line)?;
 
             self.id += 1;
             let echo_ok_msg = Message {
-                src: echo_msg.dst,
-                dst: echo_msg.src,
+                src: msg_in.dst,
+                dst: msg_in.src,
                 body: Body::<_> {
                     id: Some(self.id),
-                    in_reply_to: echo_msg.body.id,
-                    payload: self.handler.reply(echo_msg.body.payload),
+                    in_reply_to: msg_in.body.id,
+                    payload: self.handler.borrow_mut().reply(&self, msg_in.body.payload),
                 },
             };
             serde_json::to_writer(&mut stdout, &echo_ok_msg)?;

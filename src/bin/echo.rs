@@ -22,7 +22,11 @@ impl Node for EchoNode {
     type PayloadIn = Echo;
     type PayloadOut = EchoOk;
 
-    fn reply(&mut self, msg: Echo) -> EchoOk {
+    fn reply(
+        &mut self,
+        _runtime: &Runtime<Self::PayloadIn, Self::PayloadOut>,
+        msg: Echo,
+    ) -> EchoOk {
         EchoOk { echo: msg.echo }
     }
 }

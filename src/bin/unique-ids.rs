@@ -1,7 +1,6 @@
 use gossip_glomers::*;
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type")]
@@ -12,22 +11,31 @@ struct Generate {}
 #[serde(tag = "type")]
 #[serde(rename = "generate_ok")]
 struct GenerateOk {
-    id: Uuid,
+    id: String,
 }
 
-struct UniqueIdsNode {}
+struct UniqueIdsNode {
+    id: usize,
+}
 
 impl Node for UniqueIdsNode {
     type PayloadIn = Generate;
     type PayloadOut = GenerateOk;
 
-    fn reply(&mut self, _msg: Generate) -> GenerateOk {
-        GenerateOk { id: Uuid::new_v4() }
+    fn reply(
+        &mut self,
+        runtime: &Runtime<Self::PayloadIn, Self::PayloadOut>,
+        _msg: Generate,
+    ) -> GenerateOk {
+        self.id += 1;
+        GenerateOk {
+            id: format!("{}{}", runtime.node_id.as_ref().unwrap(), self.id),
+        }
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let unique_ids_node = UniqueIdsNode {};
+    let unique_ids_node = UniqueIdsNode { id: 0 };
     let runtime = RuntimeBuilder::new()
         .with_handler(Box::new(unique_ids_node))
         .build();
